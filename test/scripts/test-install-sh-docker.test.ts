@@ -53,6 +53,19 @@ describe("test-install-sh-docker", () => {
     );
   });
 
+  it("skips update lanes when the packed target is older than the resolved baseline", () => {
+    const script = readFileSync(SCRIPT_PATH, "utf8");
+
+    expect(script).toContain("is_version_less_than");
+    expect(script).toContain(
+      'if is_version_less_than "$UPDATE_EXPECT_VERSION" "$UPDATE_BASELINE_VERSION"; then',
+    );
+    expect(script).toContain("RUN_UPDATE_SMOKE=0");
+    expect(script).toContain("==> Skip update smoke:");
+    expect(script).toContain('if [[ "$RUN_UPDATE_SMOKE" == "1" ]]; then');
+    expect(script).toContain('elif [[ "$RUN_UPDATE_SMOKE" != "1" ]]; then');
+  });
+
   it("can reuse dist from the already-built root Docker smoke image", () => {
     const script = readFileSync(SCRIPT_PATH, "utf8");
     const dockerfile = readFileSync("Dockerfile", "utf8");
@@ -63,7 +76,7 @@ describe("test-install-sh-docker", () => {
     expect(script).toContain('echo "==> Reuse local dist/ from Docker image: $image"');
     expect(script).toContain("ensure_local_update_dist_import_closure");
     expect(script).toContain('node scripts/check-package-dist-imports.mjs "$ROOT_DIR"');
-    expect(script).toContain("WARN: reused Docker image dist failed import-closure check");
+    expect(script).toContain("WARN: reused Docker image dist failed integrity check");
     expect(script).toContain("pnpm build");
     expect(script).toContain("pnpm ui:build");
     expect(dockerfile).toContain("node scripts/check-package-dist-imports.mjs /app");

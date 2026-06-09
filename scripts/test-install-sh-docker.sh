@@ -137,6 +137,30 @@ console.log(
 ' "$baseline_pack_json_file" "$update_pack_json_file"
 }
 
+is_version_less_than() {
+  node - "$1" "$2" <<'NODE'
+const [left, right] = process.argv.slice(2);
+function parseVersion(value) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(value ?? "");
+  return match ? match.slice(1, 4).map(Number) : null;
+}
+const leftVersion = parseVersion(left);
+const rightVersion = parseVersion(right);
+if (!leftVersion || !rightVersion) {
+  process.exit(1);
+}
+for (let index = 0; index < leftVersion.length; index += 1) {
+  if (leftVersion[index] < rightVersion[index]) {
+    process.exit(0);
+  }
+  if (leftVersion[index] > rightVersion[index]) {
+    process.exit(1);
+  }
+}
+process.exit(1);
+NODE
+}
+
 SMOKE_IMAGE="${OPENCLAW_INSTALL_SMOKE_IMAGE:-openclaw-install-smoke:local}"
 NONROOT_IMAGE="${OPENCLAW_INSTALL_NONROOT_IMAGE:-openclaw-install-nonroot:local}"
 SMOKE_PLATFORM="$(resolve_default_smoke_platform)"
@@ -166,6 +190,7 @@ BASELINE_TGZ_FILE=""
 BASELINE_TAG_URL=""
 FRESH_TAG_URL=""
 UPDATE_TAG_URL=""
+RUN_UPDATE_SMOKE=1
 UPDATE_DOCKER_HOST_ARGS=()
 NPM_CACHE_DIR="${OPENCLAW_INSTALL_SMOKE_NPM_CACHE_DIR:-}"
 NPM_CACHE_OWNED=0
@@ -230,7 +255,7 @@ ensure_local_update_dist_import_closure() {
   if node scripts/check-package-dist-imports.mjs "$ROOT_DIR"; then
     return 0
   fi
-  echo "WARN: reused Docker image dist failed import-closure check; rebuilding local release artifacts" >&2
+  echo "WARN: reused Docker image dist failed integrity check; rebuilding local release artifacts" >&2
   pnpm build
   pnpm ui:build
 }
@@ -322,6 +347,10 @@ process.stdout.write(last.version);
   )"
   print_pack_audit "baseline" "$baseline_pack_json_file"
   print_pack_delta_audit "$baseline_pack_json_file" "$pack_json_file"
+  if is_version_less_than "$UPDATE_EXPECT_VERSION" "$UPDATE_BASELINE_VERSION"; then
+    RUN_UPDATE_SMOKE=0
+    echo "==> Skip update smoke: target ${UPDATE_EXPECT_VERSION} is older than baseline ${UPDATE_BASELINE_VERSION}"
+  fi
 }
 
 prepare_update_host_access() {
@@ -410,24 +439,30 @@ else
     LATEST_VERSION="$(cat "$LATEST_FILE")"
   fi
 
-  echo "==> Run update smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
-  docker run --rm -t \
-    --platform "$SMOKE_PLATFORM" \
-    ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
-    "${NPM_CACHE_DOCKER_ARGS[@]}" \
-    -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
-    -e OPENCLAW_INSTALL_SMOKE_MODE=update \
-    -e OPENCLAW_INSTALL_UPDATE_BASELINE="$UPDATE_BASELINE_VERSION" \
-    -e OPENCLAW_INSTALL_UPDATE_BASELINE_TAG_URL="$BASELINE_TAG_URL" \
-    -e OPENCLAW_INSTALL_UPDATE_EXPECT_VERSION="$UPDATE_EXPECT_VERSION" \
-    -e OPENCLAW_INSTALL_UPDATE_TAG_URL="$UPDATE_TAG_URL" \
-    -e OPENCLAW_NO_ONBOARD=1 \
-    -e OPENCLAW_NO_PROMPT=1 \
-    -e DEBIAN_FRONTEND=noninteractive \
-    "$SMOKE_IMAGE"
+  if [[ "$RUN_UPDATE_SMOKE" == "1" ]]; then
+    echo "==> Run update smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
+    docker run --rm -t \
+      --platform "$SMOKE_PLATFORM" \
+      ${UPDATE_DOCKER_HOST_ARGS[@]+"${UPDATE_DOCKER_HOST_ARGS[@]}"} \
+      "${NPM_CACHE_DOCKER_ARGS[@]}" \
+      -e OPENCLAW_INSTALL_PACKAGE="$PACKAGE_NAME" \
+      -e OPENCLAW_INSTALL_SMOKE_MODE=update \
+      -e OPENCLAW_INSTALL_UPDATE_BASELINE="$UPDATE_BASELINE_VERSION" \
+      -e OPENCLAW_INSTALL_UPDATE_BASELINE_TAG_URL="$BASELINE_TAG_URL" \
+      -e OPENCLAW_INSTALL_UPDATE_EXPECT_VERSION="$UPDATE_EXPECT_VERSION" \
+      -e OPENCLAW_INSTALL_UPDATE_TAG_URL="$UPDATE_TAG_URL" \
+      -e OPENCLAW_NO_ONBOARD=1 \
+      -e OPENCLAW_NO_PROMPT=1 \
+      -e DEBIAN_FRONTEND=noninteractive \
+      "$SMOKE_IMAGE"
+  else
+    echo "==> Skip update smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
+  fi
 
   if [[ "$SKIP_NPM_GLOBAL" == "1" ]]; then
     echo "==> Skip direct npm global smoke (OPENCLAW_INSTALL_SMOKE_SKIP_NPM_GLOBAL=1)"
+  elif [[ "$RUN_UPDATE_SMOKE" != "1" ]]; then
+    echo "==> Skip direct npm global smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
   else
     echo "==> Run direct npm global smoke (${UPDATE_BASELINE_VERSION} -> ${UPDATE_EXPECT_VERSION})"
     docker run --rm -t \

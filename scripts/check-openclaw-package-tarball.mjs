@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { LOCAL_BUILD_METADATA_DIST_PATHS } from "./lib/local-build-metadata-paths.mjs";
+import { collectPackageDistExportErrors } from "./lib/package-dist-exports.mjs";
 import {
   collectPackageDistImports,
   collectPackageDistImportErrors,
@@ -180,11 +181,13 @@ for (const requiredPrefix of REQUIRED_TARBALL_ENTRY_PREFIXES) {
   }
 }
 let packageVersion = "";
+let packageJson = null;
 if (entrySet.has("package.json")) {
   try {
-    const packageJson = JSON.parse(readTarEntry("package.json"));
+    packageJson = JSON.parse(readTarEntry("package.json"));
     packageVersion = typeof packageJson.version === "string" ? packageJson.version : "";
   } catch {
+    packageJson = null;
     packageVersion = "";
   }
 }
@@ -260,6 +263,14 @@ errors.push(
     imports: packageDistImports ?? undefined,
   }),
 );
+if (packageJson) {
+  errors.push(
+    ...collectPackageDistExportErrors({
+      packageJson,
+      files: normalized,
+    }),
+  );
+}
 
 if (errors.length > 0) {
   fs.rmSync(extractDir, { recursive: true, force: true });

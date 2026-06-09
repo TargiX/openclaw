@@ -12,13 +12,16 @@ function withTarball(
   files: Record<string, string>,
   testBody: (tarball: string) => void,
   version = "0.0.0",
-  options: { includeControlUi?: boolean } = {},
+  options: { includeControlUi?: boolean; exports?: Record<string, unknown> } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "openclaw-package-tarball-test-"));
   try {
     const packageRoot = join(root, "package");
     mkdirSync(join(packageRoot, "dist"), { recursive: true });
-    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "openclaw", version }));
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "openclaw", version, exports: options.exports }),
+    );
     writeFileSync(
       join(packageRoot, "dist", "postinstall-inventory.json"),
       JSON.stringify(inventory),
@@ -143,6 +146,31 @@ describe("check-openclaw-package-tarball", () => {
         );
       },
       "2026.4.27",
+    );
+  });
+
+  it("rejects package exports that point at missing dist files", () => {
+    withTarball(
+      ["dist/index.js"],
+      { "dist/index.js": "export {};\n" },
+      (tarball) => {
+        const result = spawnSync("node", [CHECK_SCRIPT, tarball], { encoding: "utf8" });
+
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(
+          "package export ./plugin-sdk/testing references missing dist file dist/plugin-sdk/testing.js",
+        );
+      },
+      "2026.4.27",
+      {
+        exports: {
+          ".": "./dist/index.js",
+          "./plugin-sdk/testing": {
+            types: "./dist/plugin-sdk/testing.d.ts",
+            default: "./dist/plugin-sdk/testing.js",
+          },
+        },
+      },
     );
   });
 
